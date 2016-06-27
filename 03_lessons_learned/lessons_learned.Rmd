@@ -130,6 +130,7 @@ You can see below the VARImp for the top 15 predictors in XGBoost and how featur
 ![](lessons_learned_files/figure-html/varImp.png)
 
 The models created in this section are just a starting point. Future improvement could:
+
 - Obviously use more training data
 - Paramater tuning
 - Model stacking
