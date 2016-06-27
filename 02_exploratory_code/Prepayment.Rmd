@@ -1,0 +1,110 @@
+---
+title: "Pre-payment"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache=TRUE, warning = FALSE, 
+                      message = FALSE, tidy=TRUE, fig.align = 'center', 
+                      fig.width = 12, fig.keep='all')
+```
+
+## Introduction
+
+
+###Libraries
+```{r, echo=TRUE}
+#load these packages
+pacman::p_load(ggplot2, RColorBrewer, scales, dplyr, Hmisc, GGally)
+
+#check that all packages loaded sucessfully
+pacman::p_loaded(ggplot2, RColorBrewer, scales, dplyr, Hmisc, GGally)
+```
+
+```{r}
+#https://gist.github.com/semerj/6f9edcb5deee392862df
+fte_theme <- function() {
+  
+  # Generate the colors for the chart procedurally with RColorBrewer
+  palette <- brewer.pal("Greys", n=9)
+  color.background = palette[2]
+  color.grid.major = palette[3]
+  color.axis.text = palette[6]
+  color.axis.title = palette[7]
+  color.title = palette[9]
+  
+  # Begin construction of chart
+  theme_bw(base_size=9) +
+    
+  # Set the entire chart region to a light gray color
+  theme(panel.background=element_rect(fill=color.background, color=color.background)) +
+  theme(plot.background=element_rect(fill=color.background, color=color.background)) +
+  theme(panel.border=element_rect(color=color.background)) +
+  
+  # Format the grid
+  theme(panel.grid.major=element_line(color=color.grid.major,size=.25)) +
+  theme(panel.grid.minor=element_blank()) +
+  theme(axis.ticks=element_blank()) +
+  
+  # Format the legend, but hide by default
+  theme(legend.position="none") +
+  theme(legend.background = element_rect(fill=color.background)) +
+  theme(legend.text = element_text(size=7,color=color.axis.title)) +
+  
+  # Set title and axis labels, and format these and tick marks
+  theme(plot.title=element_text(color=color.title, size=16, vjust=1.25)) +
+  theme(axis.text.x=element_text(size=10,color=color.axis.text)) +
+  theme(axis.text.y=element_text(size=10,color=color.axis.text)) +
+  theme(axis.title.x=element_text(size=12,color=color.axis.title, vjust=0)) +
+  theme(axis.title.y=element_text(size=12,color=color.axis.title, vjust=1.25)) +
+  # Plot margins
+  theme(plot.margin = unit(c(0.35, 0.2, 0.3, 0.35), "cm"))
+}
+```
+
+
+```{r}
+
+#Read the data
+lc_loans<-read.csv("lc_loans.csv")
+
+#extract the the rows that have to do with prepayments
+lc_loans <- lc_loans %>% 
+    select(duration, prepaid, term2, term2,
+        possible_interest, int_p_lost, last_pymnt_d ,cum_r,ann_r,loan_status,
+        issue_d, issue_year, issue_month)
+
+lc_loans$cum_r<-round(lc_loans$cum_r*100,2)
+lc_loans$ann_r<-round(lc_loans$cum_r*100,2)
+
+#create last payment month
+
+
+lc_loans$payment_date<-(format(as.Date(lc_loans$last_pymnt_d), "%b"))
+lc_loans$payment_date <- factor(lc_loans$payment_date,levels=month.abb)
+
+
+filter(lc_loans, prepaid==1 & loan_status=="Fully Paid") %>%
+    group_by(payment_date) %>%
+    summarise(count=n()) %>%
+    ggplot(aes(x=payment_date,y=count)) + 
+    geom_bar(stat="identity")+
+    fte_theme()
+```
+
+
+
+```{r}
+filter(lc_loans, prepaid==1) %>%
+ggplot(lc_loans, aes(x = payment_date)) + 
+    geom_line(aes(fill=..count..)) +
+    scale_x_datetime(labels = date_format("%b-%Y"), 
+                     breaks = date_breaks("months")) + 
+        theme(axis.text.x = element_text(angle = 45))
+```
+
+
+```{r}
+ggplot(data=mtcars, aes(x=hp)) + geom_line(aes(fill=..count..), stat="bin", binwidth=10)
+```
+
