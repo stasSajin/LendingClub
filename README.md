@@ -15,9 +15,11 @@ Lesson 1: Borrowers who leave comments in their loan description provide lower r
 
 Lesson 2: Not every defaulted and charged off loan is a bad loan
 
-Lesson 3: An ensemble of 5 ML models trained on just 1% of the data led to an absolute 6.25% increase in cumulative returns. 
+Lesson 3: An ensemble of 5 ML models trained on just 1% of the data led to an absolute 6.25% increase in cumulative returns. ml_ensemble.R has the details about the model building process.
 
 
 You can find information on data cleaning and variable creation [here](https://rawgit.com/stasSajin/LendingClub/master/01_cleaning/data_cleaning.html).
 
+###The report can be found: 
+[here](https://rawgit.com/stasSajin/LendingClub/master/03_lessons_learned/lessons_learned.html)
 
