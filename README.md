@@ -1,6 +1,9 @@
 # Lending Club
 Some exploratory analyses on Lending Club data.
 
+#Click the link below to go to the report summary 
+[Three Lessons](https://rawgit.com/stasSajin/LendingClub/master/03_lessons_learned/lessons_learned.html)
+
 # Objectives
 There are a ton of analyses on the web that explore the Lending Club Data. See examples in the list below:
 
@@ -20,6 +23,5 @@ Lesson 3: An ensemble of 5 ML models trained on just 1% of the data led to an ab
 
 You can find information on data cleaning and variable creation [here](https://rawgit.com/stasSajin/LendingClub/master/01_cleaning/data_cleaning.html).
 
-###The report can be found: 
-[here](https://rawgit.com/stasSajin/LendingClub/master/03_lessons_learned/lessons_learned.html)
+
 
