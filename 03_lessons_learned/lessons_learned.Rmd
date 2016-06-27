@@ -63,7 +63,7 @@ ggplot(data = before2015, aes(x=grade, y=median_ann_r, color=comment_exists))+
 
 
 ##Lesson 2: Defaults aren't everything--it's the bottom line return that counts
-For an investor that purchases notes through Lending Club, defaults and charge-offs are very important, since they can lead to a large loss on their bottom line. Nonetheless, an often ignored aspect of default behavior is that not all bad borrowers behave the same way. To give you an example, here are 3 examples of "bad" borrowers:
+For an investor that purchases notes through Lending Club, defaults and charge-offs are very important, since they can lead to a large loss on their bottom line. Nonetheless, an often ignored aspect of default behavior is that not all bad borrowers behave the same way. To give you an idea of what I mean, here are 3 examples of "bad" borrowers:
 
  - Borrower 1: Dissapears from the face of the Earth after getting the loan. Defaults on the first payment. Loss of principal: 100%; Loss of interest: 100%
  - Borrower 2: Makes a couple of payments, but then defaults. After a few months some of the principal was recovered. Loss of principal: 20%; Loss of interest: 80%.
@@ -106,7 +106,7 @@ This observation has important implications, because when one tries to build a c
 #Lesson 3: Pre-liminary ML for predicting returns
 This lesson is a follow-up on lesson 2. The goal will be to build a prediction algorithm that identifies which loans are likely to have positive cumulative returns. In other words, I don't predict the default classification outcome that is provided by Lending Club. Instead, I first calculate the cumulative returns based on all the payments and initial investment made by the lender. Then I create an outcome variable where loans are categorized as having either positive or negative returns. I used five different prediction algorithms and also a linear ensemble of those 5 algorithms (though it didn't lead to any improvements in returns). All predictors in the model have been carefully screened for leakage. 
 
-You can see that all of the prediction algorithms that were implemented provide at least a 4.5% improvement in mean returns and at least a 3% improvement in median returns relative to the baseline. The basiline here is defined as the universe of all loans. Note that the reason why baseline cumulative returns are so low is because we are only dealing with loans that have a completed status (either fully paid, charged-off, or defaulted). Since the majority of the loans were issued in the last 1.5 years and the default hazard rates are higher in the first few months after origination, we have a very large chunk of charged-off loans that pulls our returns down. You can see the detail of the model building processing in the file ml_ensemble.R
+You can see that all of the prediction algorithms that were implemented provide at least a 4.5% improvement in mean returns and at least a 3% improvement in median returns relative to the baseline. The basiline here is defined as the universe of all loans. Note that the reason why baseline cumulative returns are so low is because we are only dealing with loans that have a completed status (either fully paid, charged-off, or defaulted). Since the majority of the loans were issued in the last 1.5 years and the default hazard rates are higher in the first few months after origination, we have a very large chunk of charged-off loans that pulls our returns down. You can see the detail of the model building process in the file ml_ensemble.R
 
 ```{r, fig.width = 10}
 results4<-read.csv("results4.csv")
@@ -125,7 +125,7 @@ ggplot(results4, aes(return_type, return)) +
        x = toupper("Return Type"), y = toupper("Cumulative Return")) 
 ```
 
-You can see below the VARImp for the top 15 predictors in XGBoost and how the feature that identifies if a comment is present comes among the top 3:
+You can see below the VARImp for the top 15 predictors in XGBoost and how the feature that identifies if a comment is present comes among the top 3 predictors:
 
 ![](lessons_learned_files/figure-html/varImp.png)
 
