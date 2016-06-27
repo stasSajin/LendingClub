@@ -1,0 +1,595 @@
+---
+title: "Data Cleaning"
+output:
+  html_document:
+    toc: yes
+  html_notebook:
+    fig_width: 10
+    theme: journal
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE, warning = FALSE, 
+                      message = FALSE, tidy=TRUE, fig.align = 'center', 
+                      fig.width = 12, fig.keep='all')
+```
+
+## Introduction
+The following document aims to clean the lendingclub dataset and to create several new features. The following features were created:
+
+### Variables Created
+1. the year when the loan was issued `issue_year` 
+2. the month when the loan was issued `issue_month` 
+3. the number of years since first credit was opened until the date of loan issuance `credit_year` 
+4. the mean fico score `mean_fico` 
+5. the loan amout to yearly income ratio `loan_to_inc` 
+6. number of comments the borrower left`comment_n` 
+7. `comment_date` the date when the borrower left the first comment on the loan
+8. `comment_exists` whether the borrower left a comment on the loan application (yes=1,0=no)
+9. `dollar_signs` the number of dollar signs in the comment area
+10. `nchar_desc` number of characters in the description
+11. `words_n` number of words in the description
+12. `sentiment_syuzhet` the comment sentiment (positive values mean positive sentiment)
+13. `duration` the duration of the loan (i.e., the time when last payment on the loan was made)
+14. `term2` numeric value for term loan (36, 60)
+15. `prepaid` whether a loan was pre-paid or not (1=yes, 0=no)
+16. `possible_interest` possible interest gained if the loan were not prepaid
+17. `int_p_lost` interest lost to pre-payment
+18. `cum_r` cummulative return on the loan
+19. `ann_r` annualized return on the loan (useful only for loans with duration larger than 1 year)
+20. `t_rate` monthly yield for 2-year treasuries 
+
+###Libraries
+```{r, echo=TRUE}
+#load these packages
+pacman::p_load(data.table,rmarkdown,dplyr,Hmisc,lubridate,
+               caret, tm, zoo, stringr, syuzhet, ggplot2)
+
+#check that all packages loaded sucessfully
+pacman::p_loaded(data.table,rmarkdown,dplyr,Hmisc,lubridate,
+                caret, tm, zoo, stringr,syuzhet, ggplot2)
+```
+
+In the code below, I'll be reading the listing and the loans data. 
+
+```{r,}
+#extract the zip file names from the folder
+tempListLoan = list.files(pattern="*.csv")
+
+#read the csv files
+#noticed that the files have End OF File (EOF) ghost lines, so the version of the data.table on CRAN (v1.9.6) throws out an error. Instead, the current development version for data.table should be used (v1.9.7) in order for ghost lines to be skipped
+
+## Install development version of data.table
+#install.packages("data.table", type = "source",
+#    repos = "http://Rdatatable.github.io/data.table")
+
+#read the loan files
+lc_loans <- rbindlist(lapply(tempListLoan,
+                        function(file) fread(file, skip=1,
+                            na.strings=c("NA","","n/a","N/A"),
+                            strip.white=TRUE,
+                            fill =TRUE)))
+
+
+
+#convert to purely data.frame class, so there are no conflicts with the data.table class later on.
+lc_loans<-as.data.frame(lc_loans)
+
+##Remove current loans
+#I'm only interested in examining completed loans (i.e., fully paid, defaulted, or charged off), since this project will focus largely on examining historical performance
+remove<-c("In Grace Period","Late (16-30 days)",
+          "Late (31-120 days)","Current")
+lc_loans <- lc_loans %>% 
+    filter(!loan_status %in% remove) %>% 
+    filter(!is.na(id)) %>% #removes some empty rows
+    filter(!is.na(loan_amnt)) %>% #removes meta-data rows at the end-of-lone
+    filter(application_type=="INDIVIDUAL") #retain only individual applications, thus removing 78 responses for joint and direct_pay application. This step help a lot in removing several colums that are >99.99% NA, and which are only a memory hog.
+
+    
+
+#examine variables with near zero variance; this also includes cases with high class imbalance
+nearZeroVar(lc_loans, names=TRUE, allowParallel = TRUE)
+```
+
+
+# Remove several variables for the following reasons:
+- have nearZerovar
+- are not of interest for our objectives
+- represent joint applications data
+
+```{r}
+lc_loans<- lc_loans %>% 
+    select(-c(pymnt_plan,policy_code,url, member_id,
+              zip_code, application_type, annual_inc_joint, dti_joint,
+              verification_status_joint, last_fico_range_high,
+              last_fico_range_low, zip_code))
+```
+
+
+### Cleanup and feature engineering laundry list
+1. [DONE] `empl_length`  convert the variable to numeric type. We'll assume that `<1 year` represents zero and `10 years` represents `10`. 
+2. [DONE] create two new variables out of `issue_d`. One variable will be the **month**, and the other will denote the **year** when the loan was issued.
+3. [DONE] `loan_status` factor levels need to be standardized.
+5. [DONE] `url` needs to be deleted, since we already have an id var
+6. [DONE] check if `out_prncp` and `out_prncp_inv` are the same variable
+7. [DONE] Delete `member_id`, since we already have a unique identifier in the `id` variable 
+8. [DONE] delete the following variables because of zero-variance or high class imbalance: `pymnt_plan`, `policy_code` 
+9. [DONE] Create a variable that estimates the age of the borrower from the variable `earliest_cr_line`
+10. [DONE] Combine the FICO score for high and low ranges into one var that is just the average of the two ranges.
+11. [DONE] Change variables to their proper class type.
+12. [DONE] Look at the correlation matrix for numerical features and see if we can potentially remove features that are highly correlated.
+13. [DONE] Find which variables can be simply replaced with 0 rather than have NAs
+14. [DONE] `desc` provides a lot of interesting opportunities for NLP; explore it and create some new features
+15. [DONE] Create variables that measure pre-payment:
+    -Create a variable that finds which loans were prepaid
+    -Create a variable that finds how many months in advance the loan was prepaid
+    -Create a variable that finds how large was the prepayment as a % of the initial principal
+14. [DONE] See if you can create a metric for annualized returns
+
+
+
+#### complete some of the objectives from the cleanup list
+Change `empl_length` to numeric
+```{r}
+#remove the year
+lc_loans$emp_length<-gsub("< 1 year", "0", lc_loans$emp_length)
+lc_loans$emp_length<-gsub("years", "", lc_loans$emp_length)
+lc_loans$emp_length<-gsub("year", "", lc_loans$emp_length)
+lc_loans$emp_length<-gsub("\\+", "", lc_loans$emp_length)
+lc_loans$emp_length<-as.numeric(trimws(lc_loans$emp_length))
+```
+
+
+The `loan_status` variable has some entries that are not standardized. For instance, some labels have the text "Does not meet the credit policy.  Status:" which should not be there. What I will do below is replace the entries with that text with "".
+```{r}
+lc_loans$loan_status<-gsub("Does not meet the credit policy. Status:",
+                           "", lc_loans$loan_status)
+```
+
+Convert variables to their proper classes
+```{r}
+#remove the % sign before int_rate and convert to decimal
+lc_loans$int_rate    <- as.numeric(gsub("[%\\s]","", lc_loans$int_rate))/100
+
+#do the same thing for revol_util feature
+lc_loans$revol_util  <- as.numeric(gsub("[%\\s]","", lc_loans$revol_util))/100
+
+#we'll use type.convert to identify each variable type. 
+lc_loans <- lc_loans %>% mutate_each(funs(type.convert(as.character(.))))
+
+#there are several char variables that need to be converted to date.
+#function for date conversion
+to_date<-function(x) {
+    dateVar<-gsub("\\-", " ", as.character(x))
+    dateVar<-as.Date(as.yearmon(dateVar))
+    dateVar
+}
+
+date_vars<- c("issue_d","earliest_cr_line", "last_credit_pull_d",
+              "last_pymnt_d")
+
+index<- which(names(lc_loans) %in% date_vars)
+
+lc_loans[,index]<- lapply(lc_loans[,index], to_date)
+```
+
+Create the month and year variables out of issue_date
+```{r}
+#extract year and put it in a new feature called issue_year
+lc_loans$issue_year<-format(lc_loans$issue_d, "%Y")
+#extract month and put it in a new feature called issue_month
+lc_loans$issue_month<-format(lc_loans$issue_d, "%b")
+```
+
+Create a variable for age of the borrower from the date of their first credit.
+
+```{r}
+#create variable credit_years, which stores the number of years since first credit line opened until the date of the loan issuance
+lc_loans$credit_years<-as.numeric(
+    difftime(lc_loans$issue_d,
+             lc_loans$earliest_cr_line,
+             units="days")/365.25)
+```
+
+
+check if `out_prncp` and `out_prncp_inv` are the same variable
+```{r}
+summary(as.numeric(lc_loans$out_prncp)-as.numeric(lc_loans$out_prncp_inv))
+```
+
+ok, it really looks like they might be the same. Check again but plot the density of the differences
+
+```{r}
+temp_diff<-as.numeric(lc_loans$out_prncp)-as.numeric(lc_loans$out_prncp_inv)
+plot(density(temp_diff))
+```
+Ok, it looks like they might be the same variables. One final check using cor
+
+```{r}
+cor(as.numeric(lc_loans$out_prncp),as.numeric(lc_loans$out_prncp_inv))
+```
+
+We can confidently remove `out_prncp_inv` var since it is redundant.
+
+```{r}
+lc_loans<- lc_loans %>% select(-c(out_prncp_inv))
+```
+
+#####Combine the FICO score for high and low ranges into one var that is just the average of the two ranges.
+
+```{r}
+to_numeric<-c("fico_range_low","fico_range_high")
+lc_loans[to_numeric]<-sapply(lc_loans[to_numeric],as.numeric)
+
+
+lc_loans$mean_fico<-(lc_loans$fico_range_low+
+                         lc_loans$fico_range_high)/2
+
+#remove the features for fico range
+lc_loans<- lc_loans %>% select(-c(fico_range_low,fico_range_high))
+```
+
+
+##### Extract numeric columns and look at their cor matrix
+```{r}
+#extract the numeric colums
+num_vars <- sapply(lc_loans, is.numeric)
+num_df<-lc_loans[ , num_vars]
+
+
+#look first at the number of na
+na_count <-sapply(num_df, function(y) sum(length(which(is.na(y)))))
+na_count <- data.frame(na_count)
+na_count$name<-rownames(na_count)
+
+#we have quite a bit of na's here. fortunately, for all of these variables we can  replace NAs with 0. For instance, when num_tl_120dpd_2m (Number of accounts currently 120 days past due (updated in past 2 months)) is NA, we can assume that there are no delinquent accounts and have the cell replaced with 0.
+
+num_df[is.na(num_df)] <- 0
+
+
+print(findCorrelation(cor(num_df), cutoff=0.90, names=TRUE))
+```
+
+There are no that many highly correlated variables, and the reason why they are correlated seems to be because most of them, in one way or another are related to the ammout borrowed. 
+
+I'm not going to remove these variables, despite their strong relationship to each other. The reason is because the sum differential between some of these variables is in the millions of dollars, and this is no chump change. Instead, I will simply replace the NAs for numerical values with 0.
+
+```{r}
+#find the index of numerical colums in lc_loans df
+index<- which(names(lc_loans) %in% names(num_df))
+
+#replace the numerical colums with na with 0
+lc_loans[c(index)][is.na(lc_loans[c(index)])] <- 0
+```
+
+
+Create a a loan to income variable
+```{r}
+lc_loans$loan_to_inc<- ifelse(lc_loans$annual_inc==0,0,
+                              lc_loans$loan_amnt/lc_loans$annual_inc)
+```
+
+
+Fix the dti ratio; if income is 0, this number should be replaced with NA rather than 0.
+```{r}
+lc_loans$dti<- ifelse(lc_loans$annual_inc==0,NA,lc_loans$dti)
+```
+
+Same issue goes for bc_util, il_util
+
+```{r}
+lc_loans$bc_util<- ifelse(lc_loans$bc_util==0,NA,lc_loans$bc_util)
+lc_loans$il_util<- ifelse(lc_loans$il_util==0,NA,lc_loans$il_util)
+```
+
+
+#### `desc` provides a lot of interesting opportunities for NLP
+```{r}
+#examine a couple of entries
+descriptions<-filter(lc_loans, !is.na(desc)) %>% select(desc) 
+descriptions[1:5,]
+```
+
+
+I'll create the following variables:
+    -[DONE] variable that looks at whether a comment has been left
+    -[DONE] number of comments the borrower has left; the number of comments can be counted based on  the string "Borrower added on"
+    -[DONE] Clean up 
+    -[DONE] Number of times $ sign appears
+    -[DONE] the date when the first comment was left
+    -[DONE] number of characters in description
+    -[DONE] number of words in description
+    -[DONE] sentiment analysis
+
+
+```{r}
+# Count number of comments
+lc_loans$comment_n<- str_count(lc_loans$desc,"Borrower added on")
+
+# Extract the date when the first comment was left
+lc_loans$comment_date<- str_extract(lc_loans$desc, "\\d{2}/\\d{2}/\\d{2}")
+
+# Comment exists (1=yes, 0=no)
+lc_loans$comment_exists<- as.factor(ifelse(is.na(lc_loans$desc),0,1))
+
+#Count the number of $ signs
+lc_loans$dollar_signs<- str_count(lc_loans$desc,"\\$")
+
+#create function for cleaning the text entries
+clean_desc <- function(string){
+    # Lowercase
+    temp <- tolower(string)
+    #remove br tags
+    temp <- str_replace_all(temp,"<br>", " ")
+    #remove borrower added
+    temp <- str_replace_all(temp,"borrower added on", " ")
+    #' Remove everything that is not a letter 
+    temp <- str_replace_all(temp,"[^a-zA-Z\\s]", " ")
+    # Shrink down to just one white space
+    temp <- str_replace_all(temp,"[\\s]+", " ")
+}
+
+#lc_loans1<-lc_loans
+    
+lc_loans$desc<-clean_desc(as.character(lc_loans$desc))
+
+#find the number of characters in description
+lc_loans$nchar_desc<-nchar(lc_loans$desc)
+
+#find the number of words; the easy solution is to use wc from qdap
+lc_loans$words_n <- qdap::wc(lc_loans$desc)
+
+#get sentiment
+lc_loans$sentiment_syuzhet <- get_sentiment(lc_loans$desc, method = "syuzhet")  
+
+#get standford nlp sentiment
+#tagger_path <- "/stanford-corenlp-full-2015-12-09"
+
+#lc_loans$stanford_sentiment <- get_sentiment(lc_loans$desc, method="stanford", tagger_path)
+
+#remove desc, since we're not using it anymore
+lc_loans <- lc_loans %>% select(-c(desc))
+rm(descriptions)
+rm(num_df)
+```
+
+
+
+####Create variables that measure pre-payment:
+    -[DONE] Create a variable that finds which loans were prepaid
+    -[DONE] Create a variable that for the duration of the loan
+    -[DONE] Create a variable that finds how much was lost in interest as a % of posible interest that could be gained if the loan was not prepaid.
+    
+Reading the variable description, it becomes clear that we are not given information about the duration of the loans. Instead, we have a variable that defines the month when the loan was issued and the month when the last payment on the loan was made. We can create a new variable that we'll call duration, which will inlcude the number of months the loan was outstanding
+```{r}
+lc_loans$duration<-as.numeric(round((difftime(lc_loans$last_pymnt_d, 
+                            lc_loans$issue_d, units="day")*12)/365.25,1))
+
+```
+
+
+```{r, fig.height=8}
+ggplot(data=lc_loans,
+       aes(x=term, y=duration))+
+    geom_violin(fill='grey', width=1.7)+
+    geom_jitter(shape=16, position=position_jitter(0.2), alpha=1/60)+
+    scale_y_continuous(breaks=seq(0, 60, 3))+
+    stat_summary(fun.y=median, geom="point", size=2, color="red")+
+        ggtitle("Examining pre-payment risk for each loan term")+
+    labs(x = "Loan Term (months)", y="Repayment (months)")+
+    theme(axis.title.x = element_text(face="bold", colour="black", size=14),
+          axis.title.y = element_text(face="bold", colour="black", size=14),
+          axis.text.x  = element_text(size=12),
+          axis.text.y  = element_text(size=12),
+          plot.title=element_text(lineheight=.8, face="bold", colour = "black"))+
+    facet_wrap(~loan_status)+
+    geom_hline(yintercept=36)
+```
+
+The red dots represent the medians, indicating that the majoriy of the loans are prepaid before 15months has passed. 
+
+#let's check that the medians for each group
+
+```{r}
+lc_loans %>% filter(!is.na(duration)) %>% 
+    group_by(loan_status, term) %>%
+    summarise(n=n(),
+                duration_median=median(duration))
+```
+These numbers looks very suspicious. There is no way the pre-payment rates are that high. 
+
+Because we don't have direct measure of loan duration, I'll try to derive a second measure of duration based on total_payments and installment variables. I hope to get the same results as above.
+
+```{r}
+lc_loans<-mutate(lc_loans,duration2= round(total_pymnt/installment,1))
+ggplot(data=lc_loans,
+       aes(x=term, y=duration2))+
+    geom_violin(fill='grey', width=1.7)+
+    geom_jitter(shape=16, position=position_jitter(0.2), alpha=1/60)+
+    scale_y_continuous(breaks=seq(0, 60, 3))+
+    stat_summary(fun.y=median, geom="point", size=2, color="red")+
+        ggtitle("Examining pre-payment risk for each loan term")+
+    labs(x = "Loan Term (months)", y="Repayment (months)")+
+    theme(axis.title.x = element_text(face="bold", colour="black", size=14),
+          axis.title.y = element_text(face="bold", colour="black", size=14),
+          axis.text.x  = element_text(size=12),
+          axis.text.y  = element_text(size=12),
+          plot.title=element_text(lineheight=.8, face="bold", colour = "black"))+
+    facet_wrap(~loan_status)+
+    geom_hline(yintercept=36)
+```
+
+
+
+```{r}
+lc_loans %>% filter(!is.na(duration2)) %>% 
+    group_by(loan_status, term) %>%
+    summarise(n=n(),
+                duration_median=median(duration2))
+```
+
+Ok, so we got different numbers. Which one is the correct one? My instinct tells me that the second measure is right. I still have the option of calculating duration based on the ammout of interest that got paid. 
+
+```{r}
+lc_loans %>% 
+    select(funded_amnt,term,int_rate,installment, 
+           total_rec_int, duration, duration2, loan_status,collection_recovery_fee,
+           total_pymnt,total_rec_prncp,total_rec_late_fee) %>% 
+    head(2)
+```
+
+Ok, the second measure is wrong; we are keeping duration 1 as the correct measure. Nontheless, we have another issue.
+    - For a $7200 loan for a term of 36months, funded at a rate of 5.32%, the installment comes to 216.83, just like in the example above. Nontheless, the interest rate comes to about **$32** not **23.41**. This means that they might be amortizing at a daily rather than monthly schedule, even though I can't find any info on the website about this. IN other words, they charge interest on monthly installments, but if you pay at the middle of the month, the interest portion of the loan is smaller. To get more accurate measures of duration, it would be useful to reverse engineer durations based on the interest rate paid on a daily amortizing schedule.
+    
+I'll do a quick check, just to see if they use monthly ammortizing when the loans are matured.
+    
+```{r}
+lc_loans %>% 
+    select(funded_amnt,term,int_rate,installment, 
+           total_rec_int, duration, duration2, loan_status,collection_recovery_fee,
+           total_pymnt,total_rec_prncp,total_rec_late_fee) %>% 
+    filter(duration==36) %>%
+    head(2)
+```
+Ok, things look fine in this aspect.
+
+Remove duration2, since it is not useful
+```{r}
+lc_loans <-lc_loans %>% select(-c(duration2))
+```
+
+
+Now, I will create a variable that classifies a loan as prepaid or matured.
+
+```{r}
+#the term variable needs to be changed to numeric
+lc_loans$term2 <- gsub("['months'|[:blank:]]","", lc_loans$term)
+lc_loans$term2 <- as.numeric(lc_loans$term2)
+
+#create  prepaid variable 1=yes, 0=no); Add one month, just to take into account some end of date bulk pre-payments.
+lc_loans$prepaid <- ifelse((lc_loans$duration+1)<lc_loans$term2,1,0)
+```
+
+Next, I will create a variable that finds the cumulative interest that could be gained if the loan reached maturity. This will allow me later to find how much was lost in interest.
+This is the formula for cumulative interest:
+$$I_c==(((p-m*q/i)*(1+(i/q))^{b-1}+m*q/i)-((p-m*q/i)*(1+(i/q))^e+m*q/i))-m*(e-b+1)$$
+
+Where:
+    - $I_c$ - cumulative interest
+    - $p$ - principal
+    - $i$ - annual interest rate
+    - $n$ - number of payments (months)
+    - $b$ - payment start
+    - $e$ - payments per year
+    - $m$ - installment
+    - $q$ - payments per year
+    
+    
+```{r}
+prepayment_calc<-function(p,i,n,b,e,m,q) {
+    cumI=(((p-m*q/i)*(1+(i/q))^(b-1)+m*q/i)-((p-m*q/i)*
+                                                 (1+(i/q))^e+m*q/i))-m*(e-b+1)
+    -cumI
+}
+```
+
+Create variable for possible interest and for proportion of interest lost
+```{r}
+lc_loans<-lc_loans %>%
+    mutate(possible_interest=prepayment_calc(loan_amnt,int_rate,term2,1,term2,
+                                             installment,12),
+           int_p_lost=1-total_rec_int/possible_interest)
+```
+
+
+Let me just check something really quick to see how the total_pymnt column was calculated
+```{r}
+lc_loans %>% 
+    #select(loan_amnt,funded_amnt,term,int_rate,installment, 
+          # total_rec_int, duration,loan_status,collection_recovery_fee,
+          # total_pymnt,total_rec_prncp,total_rec_late_fee, loan_status,out_prncp,
+          # recoveries,collection_recovery_fee) %>% 
+    filter(loan_status=="Default") %>%
+    head(1)
+```
+
+This makes no sense, which worries me that the loan status description might be incorrect in some places. The person above paid 14884.8 on their 12k loan. They basically made every payment without any late payments and then didn't pay the last installment. Also, the total_payment column is off by a couple hundred dollars. Let me check if this is the case for other loans.
+
+```{r}
+p_off<-lc_loans %>% 
+    mutate(paid=total_pymnt-total_rec_prncp-total_rec_int-total_rec_late_fee-
+               recoveries) 
+#note that i;m not including the collection_recovery_fee, since that one is already included in recoveries var.
+
+describe(p_off$paid)
+rm(p_off)
+```
+
+For most of the loans the pay differential is small. It seems like we'll have no issues using the total_pymnt, funded_amnt, and duration to calculate out return metrics.
+
+
+
+#Create some new return measures
+    -Cummulative Return
+    -A{nnualized Return
+    -Risk-adjusted returns
+
+```{r}
+lc_loans <- lc_loans %>% 
+    mutate(cum_r=(total_pymnt-funded_amnt)/funded_amnt,
+            ann_r=((1+cum_r)^(12/duration))-1) %>%
+    filter(!is.na(ann_r))
+```
+
+```{r}
+#the cummullative return distribution
+plot(density(lc_loans$cum_r))
+```
+
+
+```{r}
+#the annual return distribution
+plot(density(lc_loans$ann_r))
+```
+
+
+```{r}
+describe(lc_loans$ann_r)
+```
+
+Explanation for INF and for why ann_r is sometimes larger than the interest_rate: 
+- The only explanation for why there is an INF value is because there is a loan that has a duration of 0, leading to division by 0.
+- The ann_r is sometimes larger because the duration var is not an exact measure of loan duration. For instance, 
+
+```{r}
+#cumulative interest paid if duration is 1 for the first loan above
+a<-prepayment_calc(25500,.1999,36,1,1,947.55,12)
+
+#$424.7875
+
+#cumulative interest paid if duration is 2 for the first loan above
+b<-prepayment_calc(25500,.1999,36,1,2,947.55,12)
+
+c(a,b)
+```
+
+The borrower paid neither the 424.7875 nor the 840.866, but 617.80, which is inbetween the two, suggesting that they pro-rate the rate on a daily basis if the installment is paid sometime before the month ends. Since our ann_r is over-inflated for these loans, I will instead replace them with the interest rate
+
+```{r}
+lc_loans<- lc_loans %>%
+    mutate(ann_r=ifelse(ann_r>int_rate,int_rate,ann_r))
+```
+
+
+
+Done Cleaning
+
+Write the lc_loans file to disk
+
+```{r}
+#write.csv(lc_loans, "lc_loans.csv")
+```
+
+
+
