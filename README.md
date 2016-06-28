@@ -18,7 +18,7 @@ Lesson 1: Borrowers who leave comments in their loan description provide lower r
 
 Lesson 2: Not every defaulted and charged off loan is a bad loan
 
-Lesson 3: An ensemble of 5 machine learning models trained and cross-validated on just 1% of the data led to an absolute 6.25% increase in cumulative returns. ml_ensemble.R has the details about the model building process.
+Lesson 3: An ensemble of 5 machine learning models trained and cross-validated on just 10% of the data led to an absolute 6.25% increase in cumulative returns. ml_ensemble.R has the details about the model building process.
 
 
 You can find information on data cleaning and variable creation [here](https://rawgit.com/stasSajin/LendingClub/master/01_cleaning/data_cleaning.html).
